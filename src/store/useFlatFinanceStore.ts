@@ -12,9 +12,11 @@ import { persist, createJSONStorage } from "zustand/middleware";
 import { createId, createInviteCode, todayIso } from "@/lib/format";
 import type {
   ActivityRecord,
+  CarryForwardRecord,
   ExpenseRecord,
   FlatInviteRecord,
   FlatRecord,
+  GuestRecord,
   InventoryItemRecord,
   JoinRequestRecord,
   LoanRecord,
@@ -59,6 +61,8 @@ interface FlatFinanceState {
   joinRequests: JoinRequestRecord[];
   notifications: NotificationRecord[];
   activity: ActivityRecord[];
+  guests: GuestRecord[];
+  carryForwards: CarryForwardRecord[];
 
   // auth
   beginAuth: (pending: PendingAuth) => void;
@@ -121,6 +125,15 @@ interface FlatFinanceState {
   // activity (internal helper exposed for completeness)
   logActivity: (input: Omit<ActivityRecord, "id" | "timestamp">) => void;
 
+  // guests
+  addGuest: (input: Omit<GuestRecord, "id">) => GuestRecord;
+  updateGuest: (id: string, patch: Partial<GuestRecord>) => void;
+  deleteGuest: (id: string) => void;
+
+  // carry-forward balances
+  addCarryForward: (input: Omit<CarryForwardRecord, "id" | "createdAt">) => CarryForwardRecord;
+  deleteCarryForward: (id: string) => void;
+
   // dev / danger
   resetEverything: () => void;
 }
@@ -140,6 +153,8 @@ const EMPTY_STATE = {
   joinRequests: [],
   notifications: [],
   activity: [],
+  guests: [],
+  carryForwards: [],
 } satisfies Partial<FlatFinanceState>;
 
 const safeStorage = createJSONStorage<FlatFinanceState>(() => {
@@ -347,7 +362,13 @@ export const useFlatFinanceStore = create<FlatFinanceState>()(
         set((s) => ({ members: s.members.map((m) => (m.id === id ? { ...m, ...patch } : m)) })),
 
       setMemberStatus: (id, status) =>
-        set((s) => ({ members: s.members.map((m) => (m.id === id ? { ...m, status } : m)) })),
+        set((s) => ({
+          members: s.members.map((m) =>
+            m.id === id
+              ? { ...m, status, leftAt: status === "left" ? todayIso() : m.leftAt }
+              : m,
+          ),
+        })),
 
       promoteMember: (id) =>
         set((s) => ({ members: s.members.map((m) => (m.id === id ? { ...m, role: "admin" } : m)) })),
@@ -601,6 +622,54 @@ export const useFlatFinanceStore = create<FlatFinanceState>()(
             ...s.activity,
           ].slice(0, 500),
         })),
+
+      // ============ GUESTS ============
+      addGuest: (input) => {
+        const guest: GuestRecord = { ...input, id: createId("gst") };
+        set((s) => ({ guests: [guest, ...s.guests] }));
+        const actor = get().currentMemberId;
+        if (actor) {
+          get().logActivity({
+            memberId: actor,
+            action: "ADD_GUEST",
+            entity: "guest",
+            entityId: guest.id,
+            details: `Guest "${guest.name}" added (${guest.arrivalDate} → ${guest.departureDate})`,
+          });
+        }
+        get().pushNotification({
+          title: "Guest added",
+          message: `${guest.name} staying ${guest.arrivalDate} – ${guest.departureDate}.`,
+          type: "info",
+        });
+        return guest;
+      },
+
+      updateGuest: (id, patch) =>
+        set((s) => ({ guests: s.guests.map((g) => (g.id === id ? { ...g, ...patch } : g)) })),
+
+      deleteGuest: (id) => set((s) => ({ guests: s.guests.filter((g) => g.id !== id) })),
+
+      // ============ CARRY-FORWARDS ============
+      addCarryForward: (input) => {
+        const cf: CarryForwardRecord = {
+          ...input,
+          id: createId("cf"),
+          createdAt: new Date().toISOString(),
+        };
+        set((s) => ({ carryForwards: [cf, ...s.carryForwards] }));
+        get().logActivity({
+          memberId: get().currentMemberId ?? "system",
+          action: "ADD_CARRY_FORWARD",
+          entity: "carryForward",
+          entityId: cf.id,
+          details: `Carry-forward ৳${cf.amount} for member from ${cf.fromMonth} → ${cf.toMonth}`,
+        });
+        return cf;
+      },
+
+      deleteCarryForward: (id) =>
+        set((s) => ({ carryForwards: s.carryForwards.filter((c) => c.id !== id) })),
 
       resetEverything: () => set({ ...EMPTY_STATE }),
     }),

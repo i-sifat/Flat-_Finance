@@ -10,9 +10,22 @@ export interface MemberRecord {
   phone: string;
   role: MemberRole;
   status: MemberStatus;
-  joinedAt: string; // ISO date
+  joinedAt: string; // ISO date YYYY-MM-DD
+  leftAt?: string;  // ISO date — set when status becomes "left", used for pro-rating
   paymentMethod: string;
   avatarColor: string; // tailwind-safe oklch chip color hash
+}
+
+/** A non-member guest tracked for meal attribution */
+export interface GuestRecord {
+  id: string;
+  name: string;
+  hostMemberId: string; // meals billed to this member (or split)
+  splitAmongAll: boolean; // true = all members share the cost; false = host pays
+  arrivalDate: string;   // YYYY-MM-DD
+  departureDate: string; // YYYY-MM-DD
+  meals: { breakfast: number; lunch: number; dinner: number }; // per-stay totals
+  note?: string;
 }
 
 export interface FlatRecord {
@@ -34,6 +47,7 @@ export interface ExpenseRecord {
   addedBy: string;
   approved: boolean;
   deleted: boolean;
+  receiptDataUrl?: string; // base64 image data URL from camera/file
 }
 
 export interface MealEntryRecord {
@@ -135,4 +149,15 @@ export interface PendingAuth {
   mode: "login" | "signup";
   inviteCode?: string;
   joinRequestNote?: string;
+}
+
+/** Carry-forward balance from a prior month into the current one */
+export interface CarryForwardRecord {
+  id: string;
+  memberId: string;
+  fromMonth: string; // YYYY-MM the balance originated in
+  toMonth: string;   // YYYY-MM it is applied to
+  amount: number;    // positive = credit (member is owed), negative = debit (member owes)
+  note?: string;
+  createdAt: string;
 }

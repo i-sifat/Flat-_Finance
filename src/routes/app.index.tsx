@@ -40,11 +40,13 @@ function DashboardPage() {
   const meals = useFlatFinanceStore((s) => s.meals);
   const payments = useFlatFinanceStore((s) => s.payments);
   const activity = useFlatFinanceStore((s) => s.activity);
+  const guests = useFlatFinanceStore((s) => s.guests);
+  const carryForwards = useFlatFinanceStore((s) => s.carryForwards);
 
   const month = currentMonth();
   const settlement = useMemo(
-    () => computeMonthlySettlement(month, members, expenses, meals, payments),
-    [month, members, expenses, meals, payments],
+    () => computeMonthlySettlement(month, members, expenses, meals, payments, guests, carryForwards),
+    [month, members, expenses, meals, payments, guests, carryForwards],
   );
 
   const myBalance = useMemo(

@@ -1,6 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { Scale, ArrowRight, Plus, Loader2 } from "lucide-react";
+import {
+  Scale, ArrowRight, Plus, Loader2, CalendarClock, Users2, ChevronsRight, Info, Trash2,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { PageHeader } from "@/components/app/PageHeader";
@@ -10,14 +12,26 @@ import { MemberAvatar } from "@/components/app/MemberAvatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
-import { useFlatFinanceStore } from "@/store/useFlatFinanceStore";
-import { computeMonthlySettlement, deriveSettlementTransfers } from "@/lib/finance/settlement";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import {
+  Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { Textarea } from "@/components/ui/textarea";
+import { useFlatFinanceStore, selectIsAdmin } from "@/store/useFlatFinanceStore";
+import {
+  computeMonthlySettlement, deriveSettlementTransfers,
+} from "@/lib/finance/settlement";
 import { currentMonth, monthLabel, todayIso } from "@/lib/format";
 
 export const Route = createFileRoute("/app/settlement")({
@@ -31,14 +45,21 @@ function SettlementPage() {
   const expenses = useFlatFinanceStore((s) => s.expenses);
   const meals = useFlatFinanceStore((s) => s.meals);
   const payments = useFlatFinanceStore((s) => s.payments);
+  const guests = useFlatFinanceStore((s) => s.guests);
+  const carryForwards = useFlatFinanceStore((s) => s.carryForwards);
   const recordPayment = useFlatFinanceStore((s) => s.recordPayment);
+  const addCarryForward = useFlatFinanceStore((s) => s.addCarryForward);
+  const deleteCarryForward = useFlatFinanceStore((s) => s.deleteCarryForward);
+  const isAdmin = useFlatFinanceStore(selectIsAdmin);
+
   const [month, setMonth] = useState(currentMonth());
   const [payOpen, setPayOpen] = useState(false);
+  const [cfOpen, setCfOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const settlement = useMemo(
-    () => computeMonthlySettlement(month, members, expenses, meals, payments),
-    [month, members, expenses, meals, payments],
+    () => computeMonthlySettlement(month, members, expenses, meals, payments, guests, carryForwards),
+    [month, members, expenses, meals, payments, guests, carryForwards],
   );
 
   const transfers = useMemo(
@@ -46,6 +67,7 @@ function SettlementPage() {
     [settlement],
   );
 
+  // Payment form
   const [payMemberId, setPayMemberId] = useState(members[0]?.id ?? "");
   const [payAmount, setPayAmount] = useState(0);
   const [payMethod, setPayMethod] = useState("bKash");
@@ -54,14 +76,42 @@ function SettlementPage() {
     if (!payMemberId || payAmount <= 0) return;
     setBusy(true);
     await new Promise((r) => setTimeout(r, 300));
-    recordPayment({
-      memberId: payMemberId, amount: payAmount, date: todayIso(), method: payMethod, note: "Settlement", month,
-    });
+    recordPayment({ memberId: payMemberId, amount: payAmount, date: todayIso(), method: payMethod, note: "Settlement", month });
     setBusy(false);
     setPayOpen(false);
     setPayAmount(0);
     toast.success("Payment recorded");
   };
+
+  // Carry-forward form
+  const [cfMemberId, setCfMemberId] = useState(members[0]?.id ?? "");
+  const [cfAmount, setCfAmount] = useState(0);
+  const [cfFromMonth, setCfFromMonth] = useState(() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() - 1);
+    return d.toISOString().slice(0, 7);
+  });
+  const [cfNote, setCfNote] = useState("");
+
+  const submitCarryForward = async () => {
+    if (!cfMemberId || cfAmount === 0) return;
+    setBusy(true);
+    await new Promise((r) => setTimeout(r, 300));
+    addCarryForward({
+      memberId: cfMemberId,
+      fromMonth: cfFromMonth,
+      toMonth: month,
+      amount: cfAmount,
+      note: cfNote || undefined,
+    });
+    setBusy(false);
+    setCfOpen(false);
+    setCfAmount(0);
+    setCfNote("");
+    toast.success("Carry-forward applied");
+  };
+
+  const monthCarryForwards = carryForwards.filter((cf) => cf.toMonth === month);
 
   return (
     <div className="space-y-6">
@@ -69,8 +119,58 @@ function SettlementPage() {
         title="Settlement"
         description={`Who pays whom for ${monthLabel(month)}`}
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="w-44" />
+
+            {/* Carry-forward (admin only) */}
+            {isAdmin ? (
+              <Dialog open={cfOpen} onOpenChange={setCfOpen}>
+                <DialogTrigger asChild>
+                  <Button variant="secondary" disabled={members.length === 0}>
+                    <ChevronsRight className="mr-1.5 h-4 w-4" /> Carry forward
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Apply carry-forward balance</DialogTitle>
+                  </DialogHeader>
+                  <p className="text-sm text-muted-foreground">
+                    Roll a leftover balance from a prior month into <strong>{monthLabel(month)}</strong>. Positive = credit (member is owed money), negative = debit (member owes).
+                  </p>
+                  <div className="space-y-4 mt-2">
+                    <div className="space-y-1.5">
+                      <Label>Member</Label>
+                      <Select value={cfMemberId} onValueChange={setCfMemberId}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {members.map((m) => <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>From month</Label>
+                      <Input type="month" value={cfFromMonth} onChange={(e) => setCfFromMonth(e.target.value)} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Amount (৳) — negative to debit</Label>
+                      <Input type="number" step="0.01" value={cfAmount || ""} onChange={(e) => setCfAmount(Number(e.target.value))} placeholder="e.g. 500 or -300" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Note (optional)</Label>
+                      <Textarea rows={2} value={cfNote} onChange={(e) => setCfNote(e.target.value)} placeholder="e.g. Surplus from last month's grocery fund" />
+                    </div>
+                  </div>
+                  <DialogFooter>
+                    <Button variant="ghost" onClick={() => setCfOpen(false)}>Cancel</Button>
+                    <Button onClick={submitCarryForward} disabled={busy} className="gradient-primary text-primary-foreground">
+                      {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Apply"}
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            ) : null}
+
+            {/* Record payment */}
             <Dialog open={payOpen} onOpenChange={setPayOpen}>
               <DialogTrigger asChild>
                 <Button className="gradient-primary text-primary-foreground hover:brightness-110" disabled={members.length === 0}>
@@ -113,43 +213,145 @@ function SettlementPage() {
         }
       />
 
-      <section className="grid gap-4 sm:grid-cols-3">
+      {/* Stats row */}
+      <section className="grid gap-4 sm:grid-cols-4">
         <Stat label="Total expenses" value={<MoneyCell amount={settlement.totalExpenses} />} />
-        <Stat label="Total meals" value={settlement.totalMeals.toString()} />
+        <Stat label="Member meals" value={settlement.totalMeals.toString()} />
         <Stat label="Meal rate" value={settlement.mealRate > 0 ? `৳${settlement.mealRate.toFixed(2)}` : "—"} />
+        <Stat
+          label="Guests this month"
+          value={guests.filter((g) => g.arrivalDate.slice(0, 7) <= month && g.departureDate.slice(0, 7) >= month).length.toString()}
+          icon={<Users2 className="h-4 w-4 text-muted-foreground" />}
+        />
       </section>
 
+      {/* Carry-forwards applied this month */}
+      {monthCarryForwards.length > 0 ? (
+        <section>
+          <h2 className="mb-3 text-base font-semibold flex items-center gap-2">
+            <CalendarClock className="h-4 w-4 text-muted-foreground" />
+            Carry-forwards applied to {monthLabel(month)}
+          </h2>
+          <div className="card-elevated divide-y divide-border overflow-hidden">
+            {monthCarryForwards.map((cf) => {
+              const member = members.find((m) => m.id === cf.memberId);
+              return (
+                <div key={cf.id} className="flex items-center gap-4 px-5 py-3">
+                  {member ? <MemberAvatar member={member} size="sm" /> : null}
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium">{member?.name ?? "Unknown"}</p>
+                    <p className="text-xs text-muted-foreground">From {monthLabel(cf.fromMonth)}{cf.note ? ` · ${cf.note}` : ""}</p>
+                  </div>
+                  <MoneyCell amount={cf.amount} tone="auto" signed className="text-sm font-semibold" />
+                  {isAdmin ? (
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button size="icon" variant="ghost">
+                          <Trash2 className="h-4 w-4 text-[color:var(--color-destructive)]" />
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Remove carry-forward?</AlertDialogTitle>
+                          <AlertDialogDescription>This will recalculate balances without this entry.</AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancel</AlertDialogCancel>
+                          <AlertDialogAction onClick={() => { deleteCarryForward(cf.id); toast.success("Carry-forward removed"); }}>Remove</AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
+
+      {/* Member summaries */}
       <section>
         <h2 className="mb-3 text-base font-semibold">Member summaries</h2>
         {settlement.summaries.length === 0 ? (
           <EmptyState icon={<Scale className="h-5 w-5" />} title="No data for this month" />
         ) : (
-          <div className="card-elevated overflow-hidden">
-            <div className="grid grid-cols-[1fr,auto,auto,auto,auto] gap-3 border-b border-border px-5 py-3 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-              <span>Member</span><span>Meals</span><span>Cost</span><span>Paid</span><span>Balance</span>
-            </div>
-            <div className="divide-y divide-border">
-              {settlement.summaries.map((s) => {
-                const member = members.find((m) => m.id === s.memberId);
-                if (!member) return null;
-                return (
-                  <div key={s.memberId} className="grid grid-cols-[1fr,auto,auto,auto,auto] items-center gap-3 px-5 py-3">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <MemberAvatar member={member} size="sm" />
-                      <span className="truncate text-sm">{member.name}</span>
+          <TooltipProvider>
+            <div className="card-elevated overflow-hidden">
+              <div className="grid grid-cols-[1fr,auto,auto,auto,auto,auto] gap-3 border-b border-border px-5 py-3 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                <span>Member</span>
+                <span>Days</span>
+                <span>Meals</span>
+                <span>Cost</span>
+                <span>Paid</span>
+                <span>Balance</span>
+              </div>
+              <div className="divide-y divide-border">
+                {settlement.summaries.map((s) => {
+                  const member = members.find((m) => m.id === s.memberId);
+                  if (!member) return null;
+                  const isPartial = s.proRateDays !== null;
+                  return (
+                    <div key={s.memberId} className="grid grid-cols-[1fr,auto,auto,auto,auto,auto] items-center gap-3 px-5 py-3">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <MemberAvatar member={member} size="sm" />
+                        <span className="truncate text-sm">{member.name}</span>
+                        {isPartial ? (
+                          <Tooltip>
+                            <TooltipTrigger>
+                              <Badge variant="secondary" className="text-[10px] gap-1">
+                                <CalendarClock className="h-3 w-3" />
+                                Partial
+                              </Badge>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              Active {s.proRateDays} days this month — fixed costs pro-rated to {(s.proRateFraction * 100).toFixed(0)}%
+                            </TooltipContent>
+                          </Tooltip>
+                        ) : null}
+                        {s.guestMealsCharged > 0 ? (
+                          <Tooltip>
+                            <TooltipTrigger>
+                              <Badge variant="secondary" className="text-[10px] gap-1">
+                                <Users2 className="h-3 w-3" />
+                                +{s.guestMealsCharged.toFixed(1)} guest
+                              </Badge>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              {s.guestMealsCharged.toFixed(1)} guest meals billed to this member
+                            </TooltipContent>
+                          </Tooltip>
+                        ) : null}
+                        {s.carryForwardApplied !== 0 ? (
+                          <Tooltip>
+                            <TooltipTrigger>
+                              <Badge variant="secondary" className="text-[10px] gap-1">
+                                <Info className="h-3 w-3" />
+                                CF {s.carryForwardApplied > 0 ? "+" : ""}{s.carryForwardApplied.toFixed(0)}
+                              </Badge>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              Carry-forward: {s.carryForwardApplied > 0 ? "credit" : "debit"} of ৳{Math.abs(s.carryForwardApplied).toFixed(2)} applied
+                            </TooltipContent>
+                          </Tooltip>
+                        ) : null}
+                      </div>
+                      <span className="font-mono text-sm text-muted-foreground">
+                        {s.proRateDays !== null ? s.proRateDays : "—"}
+                      </span>
+                      <span className="font-mono text-sm">{s.totalMeals}</span>
+                      <MoneyCell amount={s.mealCost} className="text-sm" />
+                      <MoneyCell amount={s.totalPaid} className="text-sm" />
+                      <MoneyCell amount={s.balance} tone="auto" signed className="text-sm font-semibold" />
                     </div>
-                    <span className="font-mono text-sm">{s.totalMeals}</span>
-                    <MoneyCell amount={s.mealCost} className="text-sm" />
-                    <MoneyCell amount={s.totalPaid} className="text-sm" />
-                    <MoneyCell amount={s.balance} tone="auto" signed className="text-sm font-semibold" />
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
-          </div>
+          </TooltipProvider>
         )}
       </section>
 
+      {/* Suggested transfers */}
       <section>
         <h2 className="mb-3 text-base font-semibold">Suggested transfers</h2>
         {transfers.length === 0 ? (
@@ -180,10 +382,13 @@ function SettlementPage() {
   );
 }
 
-function Stat({ label, value }: { label: string; value: React.ReactNode }) {
+function Stat({ label, value, icon }: { label: string; value: React.ReactNode; icon?: React.ReactNode }) {
   return (
     <div className="card-elevated p-5">
-      <p className="text-xs uppercase tracking-widest text-muted-foreground">{label}</p>
+      <div className="flex items-center justify-between">
+        <p className="text-xs uppercase tracking-widest text-muted-foreground">{label}</p>
+        {icon}
+      </div>
       <p className="mt-2 font-mono text-2xl font-semibold">{value}</p>
     </div>
   );

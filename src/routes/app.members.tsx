@@ -150,9 +150,14 @@ function MembersPage() {
                       ? <Button size="sm" variant="ghost" onClick={() => { promote(m.id); toast.success(`${m.name} is now admin`); }}>Make admin</Button>
                       : <Button size="sm" variant="ghost" onClick={() => { demote(m.id); toast.success(`${m.name} demoted`); }}>Demote</Button>}
                     {m.status === "active" ? (
-                      <Button size="sm" variant="ghost" onClick={() => { setStatus(m.id, "suspended"); toast.success(`${m.name} suspended`); }}>
-                        <UserMinus className="mr-1 h-3.5 w-3.5" /> Suspend
-                      </Button>
+                      <>
+                        <Button size="sm" variant="ghost" onClick={() => { setStatus(m.id, "suspended"); toast.success(`${m.name} suspended`); }}>
+                          <UserMinus className="mr-1 h-3.5 w-3.5" /> Suspend
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => { setStatus(m.id, "left"); toast.success(`${m.name} marked as left — pro-rating applied`); }}>
+                          <UserMinus className="mr-1 h-3.5 w-3.5" /> Mark left
+                        </Button>
+                      </>
                     ) : (
                       <Button size="sm" variant="ghost" onClick={() => { setStatus(m.id, "active"); toast.success(`${m.name} reinstated`); }}>
                         <UserCheck className="mr-1 h-3.5 w-3.5" /> Reinstate

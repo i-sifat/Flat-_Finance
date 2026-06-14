@@ -1,11 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
-import { Plus, Receipt, Check, Trash2, Filter, Loader2 } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
+import { Plus, Receipt, Check, Trash2, Filter, Loader2, Camera, Image, X, ZoomIn } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { toast } from "sonner";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 
 import { PageHeader } from "@/components/app/PageHeader";
 import { MoneyCell } from "@/components/app/MoneyCell";
@@ -15,31 +15,16 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
+  Dialog, DialogContent, DialogDescription, DialogFooter,
+  DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { selectCurrentMember, selectIsAdmin, useFlatFinanceStore } from "@/store/useFlatFinanceStore";
@@ -62,6 +47,16 @@ const schema = z.object({
 });
 type Values = z.infer<typeof schema>;
 
+/** Read a File as a base64 data URL */
+function readAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
 function ExpensesPage() {
   const me = useFlatFinanceStore(selectCurrentMember);
   const isAdmin = useFlatFinanceStore(selectIsAdmin);
@@ -69,10 +64,42 @@ function ExpensesPage() {
   const members = useFlatFinanceStore((s) => s.members);
   const addExpense = useFlatFinanceStore((s) => s.addExpense);
   const approveExpense = useFlatFinanceStore((s) => s.approveExpense);
+  const updateExpense = useFlatFinanceStore((s) => s.updateExpense);
   const softDelete = useFlatFinanceStore((s) => s.softDeleteExpense);
+
   const [open, setOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [filter, setFilter] = useState<"all" | "pending" | "approved">("all");
+
+  // Receipt handling
+  const [receiptPreview, setReceiptPreview] = useState<string | null>(null);
+  const [receiptLoading, setReceiptLoading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+
+  // Receipt lightbox for viewing existing receipts
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+
+  const handleFileSelect = async (file: File | null | undefined) => {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast.error("Please select an image file");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("Image must be under 5 MB");
+      return;
+    }
+    setReceiptLoading(true);
+    try {
+      const dataUrl = await readAsDataUrl(file);
+      setReceiptPreview(dataUrl);
+    } catch {
+      toast.error("Failed to read image");
+    } finally {
+      setReceiptLoading(false);
+    }
+  };
 
   const visible = useMemo(
     () =>
@@ -106,11 +133,23 @@ function ExpensesPage() {
       date: v.date,
       addedBy: me.id,
       approved: isAdmin,
+      receiptDataUrl: receiptPreview ?? undefined,
     });
-    toast.success("Expense added", { description: `৳${v.amount.toLocaleString("en-BD")} — ${v.description}` });
+    toast.success("Expense added", {
+      description: `৳${v.amount.toLocaleString("en-BD")} — ${v.description}${receiptPreview ? " · with receipt" : ""}`,
+    });
     setSubmitting(false);
     setOpen(false);
+    setReceiptPreview(null);
     form.reset({ amount: 0, category: "Grocery", description: "", date: todayIso() });
+  };
+
+  const onOpenChange = (val: boolean) => {
+    setOpen(val);
+    if (!val) {
+      setReceiptPreview(null);
+      form.reset({ amount: 0, category: "Grocery", description: "", date: todayIso() });
+    }
   };
 
   return (
@@ -119,14 +158,14 @@ function ExpensesPage() {
         title="Expenses"
         description="Every grocery run, bill and miscellaneous spend — split fairly at month-end."
         actions={
-          <Dialog open={open} onOpenChange={setOpen}>
+          <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogTrigger asChild>
               <Button className="gradient-primary text-primary-foreground hover:brightness-110">
                 <Plus className="mr-1.5 h-4 w-4" />
                 Add expense
               </Button>
             </DialogTrigger>
-            <DialogContent>
+            <DialogContent className="max-w-lg">
               <DialogHeader>
                 <DialogTitle>New expense</DialogTitle>
                 <DialogDescription>
@@ -144,19 +183,10 @@ function ExpensesPage() {
                   </div>
                   <div className="space-y-1.5">
                     <Label>Category</Label>
-                    <Select
-                      defaultValue="Grocery"
-                      onValueChange={(v) => form.setValue("category", v as ExpenseCategory)}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
+                    <Select defaultValue="Grocery" onValueChange={(v) => form.setValue("category", v as ExpenseCategory)}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        {CATEGORIES.map((c) => (
-                          <SelectItem value={c} key={c}>
-                            {c}
-                          </SelectItem>
-                        ))}
+                        {CATEGORIES.map((c) => <SelectItem value={c} key={c}>{c}</SelectItem>)}
                       </SelectContent>
                     </Select>
                   </div>
@@ -172,15 +202,89 @@ function ExpensesPage() {
                   <Label htmlFor="date">Date</Label>
                   <Input id="date" type="date" {...form.register("date")} />
                 </div>
+
+                {/* ── Receipt capture ── */}
+                <div className="space-y-2">
+                  <Label>Receipt photo <span className="text-muted-foreground font-normal">(optional)</span></Label>
+                  <AnimatePresence mode="wait">
+                    {receiptPreview ? (
+                      <motion.div
+                        key="preview"
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.95 }}
+                        className="relative"
+                      >
+                        <img
+                          src={receiptPreview}
+                          alt="Receipt"
+                          className="w-full rounded-xl border border-border object-cover max-h-48"
+                        />
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="secondary"
+                          className="absolute top-2 right-2 h-7 w-7 rounded-full"
+                          onClick={() => setReceiptPreview(null)}
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </Button>
+                      </motion.div>
+                    ) : (
+                      <motion.div
+                        key="buttons"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="flex gap-2"
+                      >
+                        {/* Camera capture (mobile) */}
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          className="flex-1"
+                          disabled={receiptLoading}
+                          onClick={() => cameraInputRef.current?.click()}
+                        >
+                          {receiptLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Camera className="mr-1.5 h-4 w-4" />}
+                          Take photo
+                        </Button>
+                        {/* File picker */}
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          className="flex-1"
+                          disabled={receiptLoading}
+                          onClick={() => fileInputRef.current?.click()}
+                        >
+                          <Image className="mr-1.5 h-4 w-4" />
+                          Upload
+                        </Button>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
+                  {/* Hidden inputs */}
+                  <input
+                    ref={cameraInputRef}
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    className="hidden"
+                    onChange={(e) => handleFileSelect(e.target.files?.[0])}
+                  />
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => handleFileSelect(e.target.files?.[0])}
+                  />
+                </div>
+
                 <DialogFooter>
-                  <Button type="button" variant="ghost" onClick={() => setOpen(false)}>
-                    Cancel
-                  </Button>
-                  <Button
-                    type="submit"
-                    disabled={submitting}
-                    className="gradient-primary text-primary-foreground hover:brightness-110"
-                  >
+                  <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
+                  <Button type="submit" disabled={submitting} className="gradient-primary text-primary-foreground hover:brightness-110">
                     {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Add expense"}
                   </Button>
                 </DialogFooter>
@@ -193,9 +297,7 @@ function ExpensesPage() {
       <div className="grid gap-4 sm:grid-cols-3">
         <div className="card-elevated p-5">
           <p className="text-xs uppercase tracking-widest text-muted-foreground">Approved total</p>
-          <p className="mt-2 font-mono text-2xl font-semibold">
-            <MoneyCell amount={totals.all} />
-          </p>
+          <p className="mt-2 font-mono text-2xl font-semibold"><MoneyCell amount={totals.all} /></p>
         </div>
         <div className="card-elevated p-5">
           <p className="text-xs uppercase tracking-widest text-muted-foreground">Pending approval</p>
@@ -241,13 +343,34 @@ function ExpensesPage() {
                 animate={{ opacity: 1, y: 0 }}
                 className="flex items-center gap-4 px-5 py-4"
               >
-                <div className="grid h-10 w-10 place-items-center rounded-xl bg-[color:var(--color-accent)]">
-                  <Receipt className="h-4 w-4" />
-                </div>
+                {/* Receipt thumbnail or icon */}
+                {e.receiptDataUrl ? (
+                  <button
+                    type="button"
+                    onClick={() => setLightboxUrl(e.receiptDataUrl!)}
+                    className="relative h-10 w-10 shrink-0 overflow-hidden rounded-xl border border-border group"
+                    aria-label="View receipt"
+                  >
+                    <img src={e.receiptDataUrl} alt="Receipt" className="h-full w-full object-cover" />
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <ZoomIn className="h-4 w-4 text-white" />
+                    </div>
+                  </button>
+                ) : (
+                  <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[color:var(--color-accent)]">
+                    <Receipt className="h-4 w-4" />
+                  </div>
+                )}
+
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <p className="truncate text-sm font-medium">{e.description}</p>
                     <Badge variant="secondary" className="text-[10px]">{e.category}</Badge>
+                    {e.receiptDataUrl ? (
+                      <Badge variant="secondary" className="text-[10px] gap-1">
+                        <Camera className="h-3 w-3" /> Receipt
+                      </Badge>
+                    ) : null}
                   </div>
                   <p className="text-xs text-muted-foreground">
                     {formatDateShort(e.date)} · {actor?.name ?? "—"}
@@ -261,15 +384,7 @@ function ExpensesPage() {
                 </div>
                 <div className="flex items-center gap-1">
                   {!e.approved && isAdmin ? (
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      onClick={() => {
-                        approveExpense(e.id);
-                        toast.success("Expense approved");
-                      }}
-                      aria-label="Approve"
-                    >
+                    <Button size="icon" variant="ghost" onClick={() => { approveExpense(e.id); toast.success("Expense approved"); }} aria-label="Approve">
                       <Check className="h-4 w-4 text-[color:var(--color-positive)]" />
                     </Button>
                   ) : null}
@@ -283,17 +398,12 @@ function ExpensesPage() {
                       <AlertDialogContent>
                         <AlertDialogHeader>
                           <AlertDialogTitle>Delete this expense?</AlertDialogTitle>
-                          <AlertDialogDescription>
-                            This will soft-delete the expense and exclude it from settlements.
-                          </AlertDialogDescription>
+                          <AlertDialogDescription>This will soft-delete the expense and exclude it from settlements.</AlertDialogDescription>
                         </AlertDialogHeader>
                         <AlertDialogFooter>
                           <AlertDialogCancel>Cancel</AlertDialogCancel>
                           <AlertDialogAction
-                            onClick={() => {
-                              softDelete(e.id);
-                              toast.success("Expense removed");
-                            }}
+                            onClick={() => { softDelete(e.id); toast.success("Expense removed"); }}
                             className="bg-[color:var(--color-destructive)] text-destructive-foreground hover:brightness-110"
                           >
                             Delete
@@ -308,6 +418,37 @@ function ExpensesPage() {
           })}
         </div>
       )}
+
+      {/* Receipt lightbox */}
+      <AnimatePresence>
+        {lightboxUrl ? (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+            onClick={() => setLightboxUrl(null)}
+          >
+            <motion.div
+              initial={{ scale: 0.9 }}
+              animate={{ scale: 1 }}
+              exit={{ scale: 0.9 }}
+              className="relative max-h-[90vh] max-w-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <img src={lightboxUrl} alt="Receipt" className="rounded-xl max-h-[85vh] object-contain" />
+              <Button
+                size="icon"
+                variant="secondary"
+                className="absolute top-2 right-2 rounded-full"
+                onClick={() => setLightboxUrl(null)}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
     </div>
   );
 }
