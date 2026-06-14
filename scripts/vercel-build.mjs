@@ -10,6 +10,9 @@
 import { mkdir, cp, writeFile, rm, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { build } from "esbuild";
+import { builtinModules } from "node:module";
+
+const nodeBuiltins = builtinModules.flatMap((m) => [m, `node:${m}`]);
 
 const root = process.cwd();
 const distClient = path.join(root, "dist", "client");
@@ -45,17 +48,19 @@ async function main() {
     entryPoints: [path.join(distServer, "server.js")],
     bundle: true,
     platform: "node",
-    format: "esm",
+    format: "cjs",
     target: "node22",
-    outfile: path.join(funcDir, "server.mjs"),
+    outfile: path.join(funcDir, "server.cjs"),
     packages: "bundle",
-    external: ["node:*"],
+    external: nodeBuiltins,
     logLevel: "warning",
   });
 
   // 3. Function entrypoint: re-exports the `fetch` handler as the Web
   // Standard `fetch` export, which the Node.js runtime invokes directly.
-  const entry = `import server from "./server.mjs";
+  const entry = `import mod from "./server.cjs";
+
+const server = mod.default ?? mod;
 
 export const fetch = (request, env, ctx) => server.fetch(request, env, ctx);
 `;
