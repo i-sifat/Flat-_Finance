@@ -48,8 +48,10 @@ const loginSchema = z.object({
 type LoginValues = z.infer<typeof loginSchema>;
 
 function AuthPage() {
+  const navigate = useNavigate();
   const beginAuth = useFlatFinanceStore((s) => s.beginAuth);
   const pendingAuth = useFlatFinanceStore((s) => s.pendingAuth);
+  const loadDemoAccount = useFlatFinanceStore((s) => s.loadDemoAccount);
   const [submitting, setSubmitting] = useState<"login" | "signup" | null>(null);
 
   const signupForm = useForm<SignupValues>({
@@ -204,6 +206,20 @@ function AuthPage() {
                             </>
                           )}
                         </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="h-11 w-full"
+                          onClick={() => {
+                            const member = loadDemoAccount();
+                            toast.success(`Welcome, ${member.name.split(" ")[0]}!`, {
+                              description: "Signed in with the demo account.",
+                            });
+                            navigate({ to: "/app", replace: true });
+                          }}
+                        >
+                          Try the demo account
+                        </Button>
                       </form>
                     </TabsContent>
 
@@ -321,9 +337,11 @@ function OtpStep() {
   const pending = useFlatFinanceStore((s) => s.pendingAuth);
   const verify = useFlatFinanceStore((s) => s.verifyOtpAndCommit);
   const clearPending = useFlatFinanceStore((s) => s.clearPendingAuth);
+  const beginAuth = useFlatFinanceStore((s) => s.beginAuth);
   const flat = useFlatFinanceStore((s) => s.flat);
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [noAccountFound, setNoAccountFound] = useState(false);
   const [verifying, setVerifying] = useState(false);
 
   const handleVerify = async () => {
@@ -341,6 +359,7 @@ function OtpStep() {
       return;
     }
     if (pending?.mode === "login") {
+      setNoAccountFound(true);
       setError("No account found for that email. Try signing up instead.");
       return;
     }
@@ -374,6 +393,7 @@ function OtpStep() {
           onChange={(v) => {
             setCode(v);
             setError(null);
+            setNoAccountFound(false);
           }}
         >
           <InputOTPGroup>
@@ -385,13 +405,28 @@ function OtpStep() {
       </div>
 
       {error ? (
-        <motion.p
+        <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          className="animate-shake mt-3 text-center text-xs text-[color:var(--color-destructive)]"
+          className="mt-3 text-center"
         >
-          {error}
-        </motion.p>
+          <p className="animate-shake text-xs text-[color:var(--color-destructive)]">{error}</p>
+          {pending?.mode === "login" && noAccountFound ? (
+            <button
+              type="button"
+              onClick={() => {
+                if (!pending) return;
+                beginAuth({ mode: "signup", email: pending.email, phone: "", name: "" });
+                setCode("");
+                setError(null);
+                setNoAccountFound(false);
+              }}
+              className="mt-2 text-xs font-medium text-[color:var(--color-primary)] hover:underline"
+            >
+              No account yet — sign up with this email
+            </button>
+          ) : null}
+        </motion.div>
       ) : null}
 
       <Button
@@ -407,6 +442,8 @@ function OtpStep() {
         onClick={() => {
           clearPending();
           setCode("");
+          setError(null);
+          setNoAccountFound(false);
         }}
         className="mt-4 w-full text-center text-xs text-muted-foreground hover:text-foreground"
       >

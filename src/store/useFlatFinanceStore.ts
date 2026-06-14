@@ -75,6 +75,9 @@ interface FlatFinanceState {
   createFlat: (input: { name: string; address: string; ownerName: string; ownerEmail: string; ownerPhone: string }) => MemberRecord;
   updateFlat: (patch: Partial<Pick<FlatRecord, "name" | "address">>) => void;
 
+  /** Demo/testing helper: seeds (or signs into) a demo flat + admin account, bypassing OTP. */
+  loadDemoAccount: () => MemberRecord;
+
   // members
   addMember: (input: Omit<MemberRecord, "id" | "joinedAt" | "status" | "avatarColor">) => MemberRecord;
   updateMember: (id: string, patch: Partial<MemberRecord>) => void;
@@ -257,6 +260,13 @@ export const useFlatFinanceStore = create<FlatFinanceState>()(
           }
         }
 
+        // First-ever user (no flat created yet): don't file a join request —
+        // keep pendingAuth so the onboarding flow can create the flat using
+        // these details.
+        if (!get().flat) {
+          return null;
+        }
+
         // Otherwise, file a join request and DON'T create a session yet
         get().createJoinRequest({
           name: pending.name ?? pending.email.split("@")[0] ?? "Guest",
@@ -329,6 +339,29 @@ export const useFlatFinanceStore = create<FlatFinanceState>()(
 
       updateFlat: (patch) =>
         set((s) => ({ flat: s.flat ? { ...s.flat, ...patch } : s.flat })),
+
+      loadDemoAccount: () => {
+        const DEMO_EMAIL = "demo@flatfinance.bd";
+        const existingFlat = get().flat;
+        const existing = get().members.find((m) => m.email.toLowerCase() === DEMO_EMAIL);
+
+        if (existingFlat && existing) {
+          set({
+            currentMemberId: existing.id,
+            sessionStartedAt: new Date().toISOString(),
+            pendingAuth: null,
+          });
+          return existing;
+        }
+
+        return get().createFlat({
+          name: "Demo Flat 3B",
+          address: "House 12, Road 7, Dhanmondi, Dhaka",
+          ownerName: "Demo Admin",
+          ownerEmail: DEMO_EMAIL,
+          ownerPhone: "01711000000",
+        });
+      },
 
       // ============ MEMBERS ============
       addMember: (input) => {
